@@ -1,0 +1,47 @@
+name: beanboard
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment: { POSTGRES_USER: beanboard, POSTGRES_PASSWORD: beanboard, POSTGRES_DB: beanboard }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U beanboard"], interval: 5s, timeout: 3s, retries: 15 }
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"], interval: 5s, timeout: 3s, retries: 15 }
+    volumes: ["nats-data:/data"]
+  object-storage:
+    image: zenko/cloudserver:latest-7.70.3
+    ports: ["9001:8000"]
+    networks:
+      default:
+        aliases: ["cloudserver-front"]
+  api:
+    build: { context: ., dockerfile: services/api/Dockerfile }
+    env_file: .env
+    ports: ["3000:3000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_healthy }
+      object-storage: { condition: service_started }
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"], interval: 10s, timeout: 4s, retries: 12 }
+  worker:
+    build: { context: ., dockerfile: services/worker/Dockerfile }
+    env_file: .env
+    depends_on:
+      api: { condition: service_healthy }
+  cron:
+    build: { context: ., dockerfile: services/cron/Dockerfile }
+    command: ["node", "services/cron/cron.mjs"]
+    env_file: .env
+    depends_on:
+      api: { condition: service_healthy }
+  static:
+    build: { context: ., dockerfile: services/static/Dockerfile }
+    ports: ["8080:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"], interval: 10s, timeout: 4s, retries: 12 }
+volumes:
+  postgres-data:
+  nats-data:

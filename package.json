@@ -1,0 +1,20 @@
+{
+  "name": "beanboard-neoapp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "start": "node services/api/server.mjs",
+    "worker": "node services/worker/worker.mjs",
+    "cron": "node services/cron/cron.mjs",
+    "validate": "node scripts/validate.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1146.0",
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
+    "pg": "8.16.3"
+  }
+}

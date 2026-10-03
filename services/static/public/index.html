@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#251a14">
+  <title>BeanBoard — Coffee, perfectly timed</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#"><span class="brand-mark">B</span><span><small>MICRO-ROASTERY & CAFÉ</small><strong>BeanBoard</strong></span></a>
+    <div class="header-actions"><span id="clock" class="clock"></span><span id="connection" class="pill waiting"><i></i> CONNECTING</span><button id="adminButton" class="ghost">Barista control</button></div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">LIVE FROM THE BAR</p><h1>Coffee, <em>perfectly timed.</em></h1><p>Explore today's small-batch roasts, watch the queue move, and order before you arrive.</p></div>
+      <button id="orderButton" class="primary">Get a digital ticket <span>→</span></button>
+    </section>
+
+    <section class="stats" aria-label="Live café status">
+      <article><div class="stat-head"><span>SHOP STATUS</span><b class="open">OPEN NOW</b></div><strong id="mood">Cozy & Flowing</strong><p><span>Closes at 4:00 PM</span><span id="seats">68% seated</span></p></article>
+      <article><div class="stat-head"><span>CURRENT WAIT</span><b>◷</b></div><strong><span id="wait">—</span> <small>minutes</small></strong><p><span id="queueCount">— active orders</span><span>Live</span></p></article>
+      <article><div class="stat-head"><span>FEATURED BREWER</span><b>✦</b></div><strong id="brewer">Julian Vance</strong><p><span>On grinder</span><span id="grinder">Ethiopia</span></p></article>
+    </section>
+
+    <section class="workspace">
+      <aside class="panel queue-panel">
+        <div class="panel-title"><div><p class="eyebrow">NOW BREWING</p><h2>Live queue</h2></div><span id="queueBadge" class="count">0 ACTIVE</span></div>
+        <div id="queue" class="queue"></div>
+        <button id="queueOrderButton" class="dashed">＋ Place a new order</button>
+      </aside>
+
+      <section class="panel roast-panel">
+        <div class="panel-title responsive"><div><p class="eyebrow">ROASTED THIS WEEK</p><h2>Today's coffee board</h2><span>Small lots, transparent sourcing, no boring cups.</span></div><div class="filters"><button class="active" data-filter="all">All</button><button data-filter="single">Single origin</button><button data-filter="espresso">Espresso</button></div></div>
+        <div id="roasts" class="roasts"></div>
+      </section>
+    </section>
+
+    <section class="service-strip">
+      <div><p class="eyebrow">NEOAPP SERVICE PULSE</p><h2>Every component, one calm view.</h2></div>
+      <div class="services"><span data-service="database">Database</span><span data-service="queue">Queue</span><span data-service="storage">Storage</span><span>Worker</span><span>Cron</span></div>
+    </section>
+  </main>
+
+  <dialog id="orderDialog">
+    <form id="orderForm" method="dialog">
+      <button type="button" class="close" data-close aria-label="Close">×</button><p class="eyebrow">SKIP THE LINE</p><h2>Join the coffee queue</h2><p class="muted">We’ll add your drink to the live board right away.</p>
+      <label>Your name<input id="customer" name="customer" maxlength="60" required placeholder="e.g. Maya"></label>
+      <label>Your drink<select id="drink" name="drink" required></select></label>
+      <label>Preparation note<input name="notes" maxlength="160" placeholder="Oat milk, extra hot…"></label>
+      <button class="primary wide" type="submit">Confirm order</button>
+    </form>
+  </dialog>
+
+  <dialog id="adminDialog">
+    <div class="admin-head"><div><p class="eyebrow">BARISTA VIEW</p><h2>Queue control</h2></div><button type="button" class="close" data-close aria-label="Close">×</button></div>
+    <label class="token">Admin token<input id="adminToken" type="password" autocomplete="off" placeholder="Set in NeoApp environment"></label>
+    <div id="adminOrders" class="admin-orders"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="config.js"></script><script src="app.js"></script>
+</body>
+</html>
