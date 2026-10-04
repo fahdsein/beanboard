@@ -17,7 +17,7 @@ services:
       default:
         aliases: ["cloudserver-front"]
   api:
-    build: { context: ., dockerfile: services/api/Dockerfile }
+    build: { context: ., dockerfile: Dockerfile }
     env_file: .env
     ports: ["3000:3000"]
     depends_on:
@@ -26,18 +26,20 @@ services:
       object-storage: { condition: service_started }
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"], interval: 10s, timeout: 4s, retries: 12 }
   worker:
-    build: { context: ., dockerfile: services/worker/Dockerfile }
+    build: { context: ., dockerfile: Dockerfile.worker }
     env_file: .env
     depends_on:
       api: { condition: service_healthy }
   cron:
-    build: { context: ., dockerfile: services/cron/Dockerfile }
+    build: { context: ., dockerfile: Dockerfile.cron }
     command: ["node", "services/cron/cron.mjs"]
     env_file: .env
     depends_on:
       api: { condition: service_healthy }
   static:
-    build: { context: ., dockerfile: services/static/Dockerfile }
+    build: { context: ., dockerfile: Dockerfile.static }
+    environment:
+      BEANBOARD_API_URL: http://localhost:3000
     ports: ["8080:8080"]
     depends_on:
       api: { condition: service_healthy }

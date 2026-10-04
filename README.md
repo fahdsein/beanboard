@@ -6,15 +6,15 @@ BeanBoard is a complete café queue and roast-board demo designed to exercise ev
 
 | NEO App type | BeanBoard role | Dockerfile / binding |
 |---|---|---|
-| Static Site | Customer display and barista control | `services/static/Dockerfile` |
-| Web Service | REST API, health checks, queue and inventory state | `services/api/Dockerfile` |
-| Worker | Consumes orders and moves them from queued → brewing → ready | `services/worker/Dockerfile` |
-| Cron | Sends a scheduled café summary event | `services/cron/Dockerfile` |
+| Static Site | Customer display and barista control | `Dockerfile.static` |
+| Web Service | REST API, health checks, queue and inventory state | `Dockerfile` |
+| Worker | Consumes orders and moves them from queued → brewing → ready | `Dockerfile.worker` |
+| Cron | Sends a scheduled café summary event | `Dockerfile.cron` |
 | NEO DB | Persists orders in PostgreSQL | Bind `DATABASE_URL` to Web Service |
 | NEO Queue | NATS JetStream order delivery | Bind the same queue to Web Service and Worker |
 | Object Storage | Stores completed-order JSON receipts | Bind S3-compatible variables to Web Service |
 
-All containers use the repository root as their Docker build context. Health endpoints are `/health` and `/ready`; the API listens on port `3000` and the static site on `8080`.
+All containers use the repository root as their Docker build context. Root-level Dockerfiles are intentional: they avoid nested-Dockerfile path loss in deployment portals. Health endpoints are `/`, `/health`, and `/ready`; the API listens on port `3000` and the static site on `8080`.
 
 ## Local run
 
@@ -32,13 +32,13 @@ Open `http://localhost:8080`. The local display automatically uses `http://local
 ## NEO App deployment order
 
 1. Create a **NEO DB**, a **NEO Queue**, and an **Object Storage** resource.
-2. Deploy the **Web Service** with `services/api/Dockerfile`, port `3000`, health path `/health`, and readiness path `/ready`.
-3. Bind all three managed resources to the Web Service and map the environment variables below.
-4. Deploy the **Worker** with `services/worker/Dockerfile`; bind the same queue and set `API_URL` to the Web Service URL.
-5. Create the **Cron** using `services/cron/Dockerfile`. Run it on the desired NEO schedule; its container executes once and exits successfully.
-6. Deploy the **Static Site** with `services/static/Dockerfile`, port `8080`, and health path `/health`.
-7. Set `CORS_ORIGIN` on the Web Service to the exact Static Site origin, then redeploy the Web Service.
-8. Set the display's API URL before deploying by editing `services/static/public/config.js`, or open it with `?api=https://your-api.example` for a temporary test.
+2. Deploy the **Web Service** with root `Dockerfile`, port `3000`, health path `/health` (the default `/` also returns 200), and readiness path `/ready`.
+3. Attach NEO DB as `DATABASE_URL` and NEO Queue as `NATS_URL`. Add the Web Service variables from `neoapp.env.example` individually after creation and verify their saved names before redeploying.
+4. Add the Object Storage binding values as protected `S3_*` variables. Keep access and secret keys out of logs and screenshots.
+5. Deploy the **Worker** with `Dockerfile.worker`; attach the same queue as `NATS_URL`, set `API_URL` to the Web Service URL, and use the same protected `WORKER_TOKEN`.
+6. Create the **Cron** using `Dockerfile.cron`. Set `API_URL` and the same protected `WORKER_TOKEN`. Run it on the desired NEO schedule; its container executes once and exits successfully.
+7. Deploy the **Static Site** with `Dockerfile.static`, port `8080`, health path `/health`, and `BEANBOARD_API_URL` set to the public Web Service URL. The container writes `config.js` safely at startup.
+8. Set `CORS_ORIGIN` on the Web Service to the exact Static Site origin, then redeploy the Web Service.
 
 ## Environment variables
 
@@ -57,8 +57,9 @@ Open `http://localhost:8080`. The local display automatically uses `http://local
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET` | Web Service | Object Storage target |
 | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Web Service | Object Storage credentials |
 | `S3_FORCE_PATH_STYLE` | Web Service | Use the value required by the storage binding |
+| `BEANBOARD_API_URL` | Static Site | Public BeanBoard Web Service URL written into `config.js` at container startup |
 
-Use strong, different values for `ADMIN_TOKEN` and `WORKER_TOKEN` in NEO. Never place credentials in the Static Site configuration.
+Use strong, different values for `ADMIN_TOKEN` and `WORKER_TOKEN` in NEO. Never place credentials in the Static Site configuration. Start from `neoapp.env.example`, but enter protected values directly in NeoApp rather than committing them.
 
 ## API surface
 

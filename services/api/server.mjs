@@ -59,6 +59,12 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
   try {
     if (request.method === "OPTIONS") return send(request, response, 204, {});
+    if (request.method === "GET" && url.pathname === "/") return send(request, response, 200, {
+      name: "BeanBoard API",
+      status: "ok",
+      health: "/health",
+      readiness: "/ready"
+    });
     if (request.method === "GET" && url.pathname === "/health") return send(request, response, 200, { status: "ok", service: "beanboard-api" });
     if (request.method === "GET" && url.pathname === "/ready") {
       const dependencies = await probes();
