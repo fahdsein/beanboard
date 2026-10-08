@@ -1,4 +1,4 @@
-# BeanBoard for NEO App
+# BeanBoard on NEO App — Beginner Deployment Guide
 
 BeanBoard is a complete café queue and roast-board demo designed to exercise every NEO App component type. The customer-facing display is fully responsive; customers can place orders, baristas can update them, and the dashboard refreshes live service state.
 
@@ -27,18 +27,144 @@ npm run validate
 docker compose up --build
 ```
 
+The local Cron container performs one report and exits. Seeing that container in an exited-success state is expected; Docker Compose does not provide the repeating schedule that NEO/Kubernetes CronJob provides.
+
 Open `http://localhost:8080`. The local display automatically uses `http://localhost:3000`. The local S3-compatible development endpoint is exposed at `http://localhost:9001`.
 
-## NEO App deployment order
+## Beginner deployment guide
 
-1. Create a **NEO DB**, a **NEO Queue**, and an **Object Storage** resource.
-2. Deploy the **Web Service** with root `Dockerfile`, port `3000`, health path `/health` (the default `/` also returns 200), and readiness path `/ready`.
-3. Attach NEO DB as `DATABASE_URL` and NEO Queue as `NATS_URL`. Add the Web Service variables from `neoapp.env.example` individually after creation and verify their saved names before redeploying.
-4. Add the Object Storage binding values as protected `S3_*` variables. Keep access and secret keys out of logs and screenshots.
-5. Deploy the **Worker** with `Dockerfile.worker`; attach the same queue as `NATS_URL`, set `API_URL` to the Web Service URL, and use the same protected `WORKER_TOKEN`.
-6. Create the **Cron** using `Dockerfile.cron`. Set `API_URL` and the same protected `WORKER_TOKEN`. Run it on the desired NEO schedule; its container executes once and exits successfully.
-7. Deploy the **Static Site** with `Dockerfile.static`, port `8080`, health path `/health`, and `BEANBOARD_API_URL` set to the public Web Service URL. The container writes `config.js` safely at startup.
-8. Set `CORS_ORIGIN` on the Web Service to the exact Static Site origin, then redeploy the Web Service.
+Deploy the components in this order. Wait until each step is ready before continuing.
+
+### Step 1 — Create the managed resources
+
+In one NEO App project, create:
+
+1. **NEO DB / PostgreSQL** for orders.
+2. **NEO Queue / NATS JetStream** for order delivery.
+3. **Object Storage** for completed-order receipts.
+
+Prepare two different strong random values. Enter them as protected variables in NEO; never commit them to Git:
+
+```env
+ADMIN_TOKEN=<protects-barista-actions>
+WORKER_TOKEN=<shared-by-web-worker-and-cron>
+```
+
+### Step 2 — Deploy the Web Service
+
+Create a **Web Service** from this repository:
+
+| NEO field | Value |
+|---|---|
+| Build method | Build File / Dockerfile |
+| Dockerfile | `Dockerfile` |
+| Start command | Leave empty |
+| Container port | `3000` |
+| Health path | `/health` |
+| Readiness path | `/ready` if available |
+| Public access | Enabled |
+| Initial replicas | `1` |
+
+Attach NEO DB as `DATABASE_URL`, NEO Queue as `NATS_URL`, and add the Web Service variables from `neoapp.env.example`. Add the Object Storage connection as protected `S3_*` variables.
+
+Set `DATABASE_AUTO_MIGRATE=true` for this demo so the Web Service can create its table. After deployment:
+
+1. Open `<web-service-url>/health`; it should return HTTP `200`.
+2. Open `<web-service-url>/ready`; the dependencies should report ready.
+3. Copy the base URL, for example `https://beanboard-api-example.app.biznetgio.dev`.
+
+Use only the base URL for `API_URL`. Do not add `/api`, `/health`, or another path.
+
+### Step 3 — Deploy the Worker
+
+Create a **Worker** from the same repository:
+
+| NEO field | Value |
+|---|---|
+| Dockerfile | `Dockerfile.worker` |
+| Start command | Leave empty; if required, use `npm run worker` |
+| Port, domain, health path | None |
+| Initial replicas | `1` |
+
+Attach the same NEO Queue and add:
+
+```env
+API_URL=https://<your-web-service-domain>
+WORKER_TOKEN=<same-value-as-the-Web-Service>
+NATS_URL=<attached-NEO-Queue>
+NATS_STREAM=BEANBOARD_ORDERS
+NATS_SUBJECT=beanboard.orders
+NATS_CONSUMER=beanboard-baristas
+NATS_MANAGE_RESOURCES=false
+```
+
+### Step 4 — Deploy the Scheduled Job / Cron
+
+Create a **Scheduled Job / Cron** from the same repository. NEO wraps this component in a Kubernetes CronJob. Do not deploy it as a Web Service.
+
+| NEO field | Value |
+|---|---|
+| Build method | Build File / Dockerfile |
+| Dockerfile | `Dockerfile.cron` |
+| Start command | Leave empty |
+| Port, domain, health path | None |
+| Test schedule | `*/5 * * * *` |
+| Time zone, if available | `Asia/Bangkok` |
+
+If the Start Command field is required, use:
+
+```text
+node services/cron/cron.mjs
+```
+
+Add only:
+
+```env
+API_URL=https://<your-web-service-domain>
+WORKER_TOKEN=<same-value-as-the-Web-Service>
+```
+
+Do not attach NEO DB, Queue, or Object Storage to the Scheduled Job. It calls the Web Service, which owns those connections. Do not add `CRON_INTERVAL_MS`; NEO/Kubernetes owns the schedule.
+
+If NEO exposes advanced CronJob settings, use:
+
+| Setting | Recommended value |
+|---|---|
+| Concurrency policy | `Forbid` |
+| Retry / backoff limit | `2` |
+| Active deadline | `120` seconds |
+| Successful history | `3` |
+| Failed history | `3` |
+
+Use **Run now** if available, or wait for the schedule. A successful run prints `BeanBoard scheduled report accepted` and finishes as **Succeeded**. A configuration, authentication, HTTP, or timeout error exits non-zero so Kubernetes can mark the Job **Failed** and apply its retry policy.
+
+After testing, change the schedule if needed. Daily at midnight is:
+
+```text
+0 0 * * *
+```
+
+### Step 5 — Deploy the Static Site
+
+Create a **Static Site** from the same repository:
+
+| NEO field | Value |
+|---|---|
+| Dockerfile | `Dockerfile.static` |
+| Port | `8080` |
+| Health path | `/health` |
+| Public access | Enabled |
+
+Add `BEANBOARD_API_URL=https://<your-web-service-domain>`. Then set the Web Service's `CORS_ORIGIN` to the exact Static Site origin and redeploy the Web Service.
+
+### Step 6 — Complete the end-to-end test
+
+1. Open the Static Site and submit an order.
+2. Confirm the Worker changes it from queued to brewing and then ready.
+3. Confirm the Web Service `/ready` endpoint remains healthy.
+4. Run the Scheduled Job and confirm it becomes **Succeeded**.
+5. Check the Scheduled Job logs for `BeanBoard scheduled report accepted`.
+6. Confirm the Cron event reaches the Web Service.
 
 ## Environment variables
 
