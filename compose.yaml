@@ -30,12 +30,6 @@ services:
     env_file: .env
     depends_on:
       api: { condition: service_healthy }
-  cron:
-    build: { context: ., dockerfile: Dockerfile.cron }
-    command: ["node", "services/cron/cron.mjs"]
-    env_file: .env
-    depends_on:
-      api: { condition: service_healthy }
   static:
     build: { context: ., dockerfile: Dockerfile.static }
     environment:

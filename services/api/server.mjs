@@ -24,6 +24,11 @@ function authorized(request) {
   const accepted = [process.env.ADMIN_TOKEN, process.env.WORKER_TOKEN].filter(Boolean);
   return !accepted.length || accepted.some((expected) => safeEqual(supplied, expected));
 }
+function cronAuthorized(request) {
+  const expected = process.env.CRON_TOKEN;
+  const supplied = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+  return Boolean(expected) && safeEqual(supplied, expected);
+}
 function addEvent(type, message, details = {}) {
   events.unshift({ time: new Date().toISOString(), type, message: cleanText(message, 220), details });
   events.length = Math.min(events.length, 100);
@@ -54,6 +59,17 @@ async function probes() {
   try { if (process.env.S3_ENDPOINT) { await ensureBucket(); result.storage = "ready"; } } catch { result.storage = "unavailable"; }
   return result;
 }
+async function currentSummary() {
+  return {
+    generatedAt: new Date().toISOString(),
+    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    ...(await probes()),
+    totalOrders: orders.length,
+    activeOrders: orders.filter((item) => !["ready", "completed", "cancelled"].includes(item.status)).length,
+    readyOrders: orders.filter((item) => item.status === "ready").length,
+    completedOrders: orders.filter((item) => item.status === "completed").length
+  };
+}
 
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
@@ -72,7 +88,16 @@ const server = http.createServer(async (request, response) => {
       return send(request, response, ok ? 200 : 503, { status: ok ? "ready" : "degraded", dependencies });
     }
     if (request.method === "GET" && url.pathname === "/api/state") return send(request, response, 200, publicState(orders, roasts, events));
-    if (request.method === "GET" && url.pathname === "/api/summary") return send(request, response, 200, { uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), ...(await probes()), activeOrders: orders.filter((item) => !["ready", "completed", "cancelled"].includes(item.status)).length });
+    if (request.method === "GET" && url.pathname === "/api/summary") return send(request, response, 200, await currentSummary());
+
+    if (request.method === "POST" && url.pathname === "/api/cron/daily-summary") {
+      if (!process.env.CRON_TOKEN) return send(request, response, 503, { error: "cron_not_configured" });
+      if (!cronAuthorized(request)) return send(request, response, 401, { error: "unauthorized" });
+      const summary = await currentSummary();
+      addEvent("cron", `Scheduled café report: ${summary.activeOrders} active orders`, summary);
+      console.log(`${summary.generatedAt} BeanBoard scheduled report accepted`);
+      return send(request, response, 200, { accepted: true, summary });
+    }
 
     if (request.method === "POST" && url.pathname === "/api/orders") {
       const order = createOrder(await body(request));

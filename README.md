@@ -9,12 +9,12 @@ BeanBoard is a complete café queue and roast-board demo designed to exercise ev
 | Static Site | Customer display and barista control | `Dockerfile.static` |
 | Web Service | REST API, health checks, queue and inventory state | `Dockerfile` |
 | Worker | Consumes orders and moves them from queued → brewing → ready | `Dockerfile.worker` |
-| Cron | Sends a scheduled café summary event | `Dockerfile.cron` |
+| Scheduled Job | Calls the Web Service on a schedule | HTTP `POST` to `/api/cron/daily-summary` |
 | NEO DB | Persists orders in PostgreSQL | Bind `DATABASE_URL` to Web Service |
 | NEO Queue | NATS JetStream order delivery | Bind the same queue to Web Service and Worker |
 | Object Storage | Stores completed-order JSON receipts | Bind S3-compatible variables to Web Service |
 
-All containers use the repository root as their Docker build context. Root-level Dockerfiles are intentional: they avoid nested-Dockerfile path loss in deployment portals. Health endpoints are `/`, `/health`, and `/ready`; the API listens on port `3000` and the static site on `8080`.
+The Scheduled Job is different from the other applications: NEO does not build it from this repository. NEO runs `curl` on a Kubernetes CronJob schedule and calls a protected endpoint on the BeanBoard Web Service.
 
 ## Local run
 
@@ -26,8 +26,6 @@ npm test
 npm run validate
 docker compose up --build
 ```
-
-The local Cron container performs one report and exits. Seeing that container in an exited-success state is expected; Docker Compose does not provide the repeating schedule that NEO/Kubernetes CronJob provides.
 
 Open `http://localhost:8080`. The local display automatically uses `http://localhost:3000`. The local S3-compatible development endpoint is exposed at `http://localhost:9001`.
 
@@ -43,11 +41,12 @@ In one NEO App project, create:
 2. **NEO Queue / NATS JetStream** for order delivery.
 3. **Object Storage** for completed-order receipts.
 
-Prepare two different strong random values. Enter them as protected variables in NEO; never commit them to Git:
+Prepare three different strong random values. Enter them as protected variables in NEO; never commit them to Git:
 
 ```env
 ADMIN_TOKEN=<protects-barista-actions>
-WORKER_TOKEN=<shared-by-web-worker-and-cron>
+WORKER_TOKEN=<protects-worker-calls>
+CRON_TOKEN=<protects-scheduled-job-calls>
 ```
 
 ### Step 2 — Deploy the Web Service
@@ -65,7 +64,7 @@ Create a **Web Service** from this repository:
 | Public access | Enabled |
 | Initial replicas | `1` |
 
-Attach NEO DB as `DATABASE_URL`, NEO Queue as `NATS_URL`, and add the Web Service variables from `neoapp.env.example`. Add the Object Storage connection as protected `S3_*` variables.
+Attach NEO DB as `DATABASE_URL`, NEO Queue as `NATS_URL`, and add the Web Service variables from `neoapp.env.example`. Add the Object Storage connection as protected `S3_*` variables. Add `ADMIN_TOKEN`, `WORKER_TOKEN`, and `CRON_TOKEN` as three different protected values.
 
 Set `DATABASE_AUTO_MIGRATE=true` for this demo so the Web Service can create its table. After deployment:
 
@@ -98,51 +97,59 @@ NATS_CONSUMER=beanboard-baristas
 NATS_MANAGE_RESOURCES=false
 ```
 
-### Step 4 — Deploy the Scheduled Job / Cron
+### Step 4 — Configure the HTTP Scheduled Job
 
-Create a **Scheduled Job / Cron** from the same repository. NEO wraps this component in a Kubernetes CronJob. Do not deploy it as a Web Service.
+Open **New → Scheduled Jobs** in NEO. This form does not use GitHub, a Dockerfile, a build command, or a Start Command. NEO's own CronJob container calls the BeanBoard Web Service with `curl`.
+
+First use a five-minute test schedule:
 
 | NEO field | Value |
 |---|---|
-| Build method | Build File / Dockerfile |
-| Dockerfile | `Dockerfile.cron` |
-| Start command | Leave empty |
-| Port, domain, health path | None |
-| Test schedule | `*/5 * * * *` |
-| Time zone, if available | `Asia/Bangkok` |
+| Scheduled Job name | `beanboard-daily-summary` |
+| Run every N seconds | `0` |
+| Schedule (cron) | `*/5 * * * *` |
+| Timezone | `Asia/Jakarta` |
+| Concurrency | `Forbid` |
+| Timeout seconds | `60` |
+| Run mode | `HTTP endpoint` |
+| Endpoint URL | `https://<your-web-service-domain>/api/cron/daily-summary` |
+| Method | `POST` |
 
-If the Start Command field is required, use:
+Use the generated **Web Service** public domain in Endpoint URL—not the Static Site domain, GitHub URL, or NEO dashboard URL.
 
-```text
-node services/cron/cron.mjs
-```
+Add these request headers:
 
-Add only:
-
-```env
-API_URL=https://<your-web-service-domain>
-WORKER_TOKEN=<same-value-as-the-Web-Service>
-```
-
-Do not attach NEO DB, Queue, or Object Storage to the Scheduled Job. It calls the Web Service, which owns those connections. Do not add `CRON_INTERVAL_MS`; NEO/Kubernetes owns the schedule.
-
-If NEO exposes advanced CronJob settings, use:
-
-| Setting | Recommended value |
+| Header name | Header value |
 |---|---|
-| Concurrency policy | `Forbid` |
-| Retry / backoff limit | `2` |
-| Active deadline | `120` seconds |
-| Successful history | `3` |
-| Failed history | `3` |
+| `Authorization` | `Bearer <your-CRON_TOKEN>` |
+| `Content-Type` | `application/json` |
 
-Use **Run now** if available, or wait for the schedule. A successful run prints `BeanBoard scheduled report accepted` and finishes as **Succeeded**. A configuration, authentication, HTTP, or timeout error exits non-zero so Kubernetes can mark the Job **Failed** and apply its retry policy.
+The value after `Bearer ` must exactly match the protected `CRON_TOKEN` on the Web Service. If the form provides a request-body field, enter:
 
-After testing, change the schedule if needed. Daily at midnight is:
+```json
+{}
+```
+
+Do not attach NEO DB, Queue, or Object Storage to this Scheduled Job. It calls the Web Service, and the Web Service owns those connections.
+
+Use **Run now** if available, or wait up to five minutes. A successful request returns HTTP `200` with `accepted: true`; the Scheduled Job should show **Succeeded**, and the Web Service logs should contain `BeanBoard scheduled report accepted`.
+
+After the test succeeds, daily at midnight is:
 
 ```text
 0 0 * * *
 ```
+
+Keep `Run every N seconds` at `0` when using the cron expression. `Asia/Jakarta` is UTC+7 and matches Bangkok time.
+
+Common failures:
+
+| Result | Check |
+|---|---|
+| HTTP `401` | Header starts with `Bearer ` and its token matches `CRON_TOKEN` |
+| HTTP `404` | Endpoint ends with `/api/cron/daily-summary` and the newest Web Service code is deployed |
+| HTTP `503` with `cron_not_configured` | Add `CRON_TOKEN` to the Web Service and redeploy it |
+| Timeout | Open the Web Service `/health` URL and confirm public networking works |
 
 ### Step 5 — Deploy the Static Site
 
@@ -173,19 +180,20 @@ Add `BEANBOARD_API_URL=https://<your-web-service-domain>`. Then set the Web Serv
 | `PORT=3000` | Web Service | Public HTTP port |
 | `CORS_ORIGIN` | Web Service | Exact Static Site origin |
 | `ADMIN_TOKEN` | Web Service + browser operator | Protects barista updates; do not expose it in `config.js` |
-| `WORKER_TOKEN` | Web Service, Worker, Cron | Authenticates service-to-service updates |
+| `WORKER_TOKEN` | Web Service + Worker | Authenticates Worker updates |
+| `CRON_TOKEN` | Web Service + NEO request header | Authenticates the HTTP Scheduled Job |
 | `DATABASE_URL` | Web Service | NEO DB PostgreSQL connection string |
 | `DATABASE_AUTO_MIGRATE=true` | Web Service | Creates the BeanBoard order table; enable only for this demo database |
 | `NATS_URL`, `NATS_STREAM`, `NATS_SUBJECT`, `NATS_CONSUMER` | Web Service + Worker | NEO Queue connection and resource names |
 | `NATS_TOKEN` or `NATS_USER` / `NATS_PASSWORD` | Web Service + Worker | Queue credentials supplied by the binding |
 | `NATS_MANAGE_RESOURCES=false` | Web Service + Worker | Keep false for NEO-managed streams; local Compose uses true |
-| `API_URL` | Worker + Cron | Web Service base URL |
+| `API_URL` | Worker | Web Service base URL |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET` | Web Service | Object Storage target |
 | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | Web Service | Object Storage credentials |
 | `S3_FORCE_PATH_STYLE` | Web Service | Use the value required by the storage binding |
 | `BEANBOARD_API_URL` | Static Site | Public BeanBoard Web Service URL written into `config.js` at container startup |
 
-Use strong, different values for `ADMIN_TOKEN` and `WORKER_TOKEN` in NEO. Never place credentials in the Static Site configuration. Start from `neoapp.env.example`, but enter protected values directly in NeoApp rather than committing them.
+Use strong, different values for `ADMIN_TOKEN`, `WORKER_TOKEN`, and `CRON_TOKEN`. Never place credentials in the Static Site configuration or Git. Start from `neoapp.env.example`, but enter protected values directly in NEO App.
 
 ## API surface
 
@@ -196,7 +204,8 @@ Use strong, different values for `ADMIN_TOKEN` and `WORKER_TOKEN` in NEO. Never 
 - `PATCH /api/orders/:id` — protected barista/worker status update
 - `PATCH /api/roasts/:id` — protected inventory update
 - `GET /api/summary` — service summary for Cron
-- `POST /api/events` — protected worker/Cron event ingestion
+- `POST /api/cron/daily-summary` — protected one-request Scheduled Job action
+- `POST /api/events` — protected Worker/service event ingestion
 
 ## Verification
 
